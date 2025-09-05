@@ -1,0 +1,7 @@
+# Zig build artifacts
+zig-out/
+**/.zig-cache/
+
+# Executables
+*.exe
+tiny_raytracer_zig
