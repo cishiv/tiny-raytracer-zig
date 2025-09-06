@@ -1,5 +1,7 @@
 const std = @import("std");
 
+// C
+extern fn write_png_wrapper(filename: [*:0]const u8, w: c_int, h: c_int, comp: c_int, data: *const anyopaque, stride_in_bytes: c_int) c_int;
 // Vectors
 const Vec4 = struct {
     x: f64,
@@ -83,6 +85,14 @@ const Vec3 = struct {
 
     fn magnitude(self: Vec3) f64 {
         return std.math.sqrt(self.x * self.x + self.y * self.y + self.z * self.z);
+    }
+
+    fn convertToRGB(self: Vec3) struct { r: u8, g: u8, b: u8 } {
+        return .{
+            .r = @intFromFloat(255.0 * @max(0.0, @min(1.0, self.x))),
+            .g = @intFromFloat(255.0 * @max(0.0, @min(1.0, self.y))),
+            .b = @intFromFloat(255.0 * @max(0.0, @min(1.0, self.z))),
+        };
     }
 };
 
@@ -244,7 +254,8 @@ pub fn main() !void {
     };
 
     // framebuffer with size width * height
-    var framebuffer: [width * height]Vec3 = undefined; // stack allocated
+    const framebuffer = try allocator.alloc(Vec3, width * height);
+    defer allocator.free(framebuffer);
     const origin = Vec3{ .x = 0, .y = 0, .z = 0 };
 
     std.debug.print("Rendering scene...\n", .{});
@@ -259,11 +270,26 @@ pub fn main() !void {
 
             const rayDirection = Vec3{ .x = xPos, .y = yPos, .z = zPos };
             const rayDirectionNormalized = rayDirection.normalize();
-            framebuffer[y + x * width] = castRay(origin, rayDirectionNormalized, &spheres, &lights, 0, allocator);
+            framebuffer[y * width + x] = castRay(origin, rayDirectionNormalized, &spheres, &lights, 0, allocator);
         }
     }
 
     std.debug.print("Framebuffer filled\n", .{});
+    // dump the framebuffer to a file as a raw array
+    // Dump framebuffer to CSV file
+    // const csv_file = try std.fs.cwd().createFile("framebuffer.csv", .{});
+    // defer csv_file.close();
+    // const writer = csv_file.writer();
+
+    // // Write header
+    // try writer.writeAll("x,y,z\n");
+
+    // // Write each Vec3 as CSV row
+    // for (framebuffer) |vec| {
+    //     try std.fmt.format(writer, "{d},{d},{d}\n", .{ vec.x, vec.y, vec.z });
+    // }
+
+    try saveFramebuffer(framebuffer, width, height, allocator);
 }
 
 fn castRay(origin: Vec3, direction: Vec3, spheres: []Sphere, lights: []Light, depth: u32, allocator: std.mem.Allocator) Vec3 {
@@ -273,7 +299,7 @@ fn castRay(origin: Vec3, direction: Vec3, spheres: []Sphere, lights: []Light, de
 
     const intersects = sceneIntersect(origin, direction, &point, &N, &mat, spheres);
 
-    if (intersects or depth > 4) {
+    if (!intersects or depth > 4) {
         return BG_COLOR;
     }
 
@@ -418,4 +444,44 @@ fn refract(I: Vec3, N: Vec3, etaT: f64, etaI: f64) Vec3 {
     }
 
     return I.scalarMul(eta).add(N.scalarMul((eta * cos_i - std.math.sqrt(k))));
+}
+
+pub fn saveFramebuffer(framebuffer: []Vec3, width: u32, height: u32, allocator: std.mem.Allocator) !void {
+
+    // Allocate RGBA buffer
+    const rgba_data = try allocator.alloc(u8, width * height * 4);
+    defer allocator.free(rgba_data);
+
+    // Convert framebuffer to RGBA bytes
+    for (0..height) |j| {
+        for (0..width) |i| {
+            var v = framebuffer[i + j * width];
+
+            // Find max component and normalize
+            const max_val = @max(v.x, @max(v.y, v.z));
+            if (max_val > 1.0) {
+                v = v.scalarMul(1.0 / max_val);
+            }
+
+            // Convert to RGB
+            const rgb = v.convertToRGB();
+
+            // Set RGBA data
+            const pixel_index = (i + j * width) * 4;
+            rgba_data[pixel_index + 0] = rgb.r; // R
+            rgba_data[pixel_index + 1] = rgb.g; // G
+            rgba_data[pixel_index + 2] = rgb.b; // B
+            rgba_data[pixel_index + 3] = 255; // A
+        }
+    }
+
+    // Write PNG file
+    const result = write_png_wrapper("test.png", @intCast(width), @intCast(height), 4, // RGBA = 4 components
+        rgba_data.ptr, // This now works because data parameter is [*]const u8
+        @intCast(width * 4) // stride
+    );
+
+    if (result == 0) {
+        return error.FailedToWritePNG;
+    }
 }

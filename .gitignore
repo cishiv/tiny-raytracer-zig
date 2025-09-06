@@ -4,4 +4,4 @@ zig-out/
 
 # Executables
 *.exe
-tiny_raytracer_zig
+raytracer

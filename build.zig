@@ -12,6 +12,17 @@ pub fn build(b: *std.Build) void {
             .imports = &.{},
         }),
     });
+    // Add the C wrapper file
+    exe.addCSourceFile(.{
+        .file = b.path("stb_wrapper.c"),
+        .flags = &.{}, // Remove -std=c99 temporarily
+    });
+
+    // Add include path for the header
+    exe.addIncludePath(b.path("."));
+
+    // Link C library
+    exe.linkLibC();
 
     b.installArtifact(exe);
 
