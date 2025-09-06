@@ -6,8 +6,6 @@ Re-implements https://github.com/cishiv/tiny-raytracer
 
 ![test.png](./test.png)
 
-Looks a little whacky!
-
 ### Credits
 
 - stb headers from http://nothings.org/stb/

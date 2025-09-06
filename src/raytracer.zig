@@ -263,12 +263,13 @@ pub fn main() !void {
     for (0..height) |y| {
         for (0..width) |x| {
             const xFloat: f64 = @floatFromInt(x);
-            const xPos: f64 = xFloat + 0.5 - width / 2;
-            const yFloat: f64 = @floatFromInt(y); // type inference can't work across all the disaprate ops in the calc
-            const yPos = yFloat + 0.5 - height / 2;
-            const zPos = -@as(f64, height) / (2.0 * std.math.tan((@as(f64, fov) / 2.0)));
+            const yFloat: f64 = @floatFromInt(y);
+            const aspect: f64 = @as(f64, width) / @as(f64, height);
+            const scale = std.math.tan(fov / 2.0);
+            const px = (2.0 * ((xFloat + 0.5) / @as(f64, width)) - 1.0) * aspect * scale;
+            const py = (1.0 - 2.0 * ((yFloat + 0.5) / @as(f64, height))) * scale;
 
-            const rayDirection = Vec3{ .x = xPos, .y = yPos, .z = zPos };
+            const rayDirection = Vec3{ .x = px, .y = py, .z = -1.0 };
             const rayDirectionNormalized = rayDirection.normalize();
             framebuffer[y * width + x] = castRay(origin, rayDirectionNormalized, &spheres, &lights, 0, allocator);
         }
@@ -358,7 +359,9 @@ fn castRay(origin: Vec3, direction: Vec3, spheres: []Sphere, lights: []Light, de
 
         diffuse_light_intensity += light.intensity * @max(0.0, light_direction.dot(N));
 
-        specular_light_intensity += std.math.pow(f64, @max(0.0, reflect(light_direction, N).dot(direction)), mat.specularExponent) * light.intensity;
+        const view_dir = direction.negate();
+        const spec_base = @max(0.0, reflect(light_direction.negate(), N).dot(view_dir));
+        specular_light_intensity += std.math.pow(f64, spec_base, mat.specularExponent) * light.intensity;
     }
 
     // big math
@@ -386,7 +389,7 @@ fn sceneIntersect(origin: Vec3, direction: Vec3, hit: *Vec3, N: *Vec3, mat: *Mat
     for (spheres) |sphere| {
         var distI: f64 = 0; // FIXME: Does this need be passed as *distI?
         const intersect = sphere.ray_intersect(origin, direction, &distI);
-        if (intersect.intersects) {
+        if (intersect.intersects and intersect.dist < max_sphere_distance) {
             max_sphere_distance = intersect.dist;
             const k = origin.add(direction.scalarMul(intersect.dist));
             hit.* = k;
@@ -396,6 +399,7 @@ fn sceneIntersect(origin: Vec3, direction: Vec3, hit: *Vec3, N: *Vec3, mat: *Mat
             mat.diffuseColor = sphere.mat.diffuseColor;
             mat.abledo = sphere.mat.abledo;
             mat.specularExponent = sphere.mat.specularExponent;
+            mat.refractiveIndex = sphere.mat.refractiveIndex;
         }
     }
 
@@ -404,11 +408,11 @@ fn sceneIntersect(origin: Vec3, direction: Vec3, hit: *Vec3, N: *Vec3, mat: *Mat
     if (@abs(direction.y) > 1E-3) {
         const d = -(origin.y + 4) / direction.y;
         const pt = origin.add(direction.scalarMul(d));
-        if (d > 0.0 and @abs(pt.x) < 10 and pt.z < -10 and pt.z > -30 and d < checkerboard_distance) {
+        if (d > 0.0 and @abs(pt.x) < 10 and pt.z < -10 and pt.z > -30 and d < checkerboard_distance and d < max_sphere_distance) {
             checkerboard_distance = d;
             hit.* = pt;
             N.* = Vec3{ .x = 0, .y = 1, .z = 0 };
-            if (@mod(@as(i32, @intFromFloat(0.5 * hit.x + 1000)) + @as(i32, @intFromFloat(0.5 * hit.z)), 2) == 1) {
+            if (@mod(@as(i32, @intFromFloat(0.5 * hit.*.x + 1000)) + @as(i32, @intFromFloat(0.5 * hit.*.z)), 2) == 1) {
                 mat.diffuseColor = Vec3{ .x = 0.3, .y = 0.3, .z = 0.3 };
             } else {
                 mat.diffuseColor = Vec3{ .x = 0.3, .y = 0.2, .z = 0.1 };
@@ -440,7 +444,8 @@ fn refract(I: Vec3, N: Vec3, etaT: f64, etaI: f64) Vec3 {
     const k = 1.0 - eta * eta * (1 - cos_i * cos_i);
 
     if (k < 0.0) {
-        return Vec3{ .x = 1.0, .y = 0.0, .z = 0.0 };
+        // total internal reflection: fall back to reflection
+        return reflect(I, N);
     }
 
     return I.scalarMul(eta).add(N.scalarMul((eta * cos_i - std.math.sqrt(k))));
